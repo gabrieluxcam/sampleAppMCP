@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__uxcam-integration-assistant__get_integration_overview"
+    ],
+    "deny": []
+  }
+}
