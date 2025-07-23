@@ -62,5 +62,9 @@
 	<string>This app needs access to camera to take profile photos.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>This app needs access to photo library to select profile photos.</string>
+	<key>UXCamAppKey</key>
+	<string>$(UXCAM_KEY)</string>
+	<key>NSUserTrackingUsageDescription</key>
+	<string>This app uses analytics to improve user experience and identify usability issues.</string>
 </dict>
 </plist> 

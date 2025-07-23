@@ -34,6 +34,20 @@ class MainViewController: UIViewController {
                 "tap_count": tapCount,
                 "milestone": tapCount % 10 == 0 ? tapCount : nil ?? 0
             ])
+            
+            // Track UXCam milestone events
+            if tapCount % 10 == 0 {
+                trackMilestoneReached(tapCount)
+            }
+            
+            // Track first value received
+            if tapCount == 1 {
+                UXCamEventManager.shared.trackFirstValueReceived(
+                    valueType: "first_tap",
+                    timeToValue: Date().timeIntervalSince(Date()), // Time since app launch
+                    valueContext: ["onboarding_complete": "true"]
+                )
+            }
         }
     }
     private let tapCountLabel = UILabel()
@@ -51,6 +65,23 @@ class MainViewController: UIViewController {
             "current_tap_count": tapCount,
             "subscription_tier": PremiumManager.shared.getCurrentTier().rawValue
         ])
+    }
+    
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        
+        // Tag screen for UXCam when user actually sees it
+        UXCamScreenNames.tagScreen(UXCamScreenNames.home)
+        
+        // Apply minimal privacy protection (home screen is mostly non-sensitive)
+        setupPrivacyProtection()
+    }
+    
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        
+        // Remove screen-level privacy protection when leaving
+        removeUXCamPrivacyProtection()
     }
     
     override func viewWillAppear(_ animated: Bool) {
@@ -306,6 +337,9 @@ class MainViewController: UIViewController {
             if completed {
                 // Update achievement
                 AchievementManager.shared.updateProgress(for: "first_share", progress: 1)
+                
+                // Track UXCam content sharing success
+                self.trackShareSuccess()
             }
         }
         
@@ -324,6 +358,18 @@ class MainViewController: UIViewController {
     
     @objc private func upgradePromptTapped() {
         AnalyticsManager.shared.trackEvent(.buttonTap, parameters: ["button": "upgrade_prompt"])
+        
+        // Track premium upgrade initiation
+        UXCamEventManager.shared.trackPremiumUpgradeStarted(
+            tier: "premium",
+            triggerSource: "milestone_prompt",
+            userContext: [
+                "tap_count": tapCount,
+                "trigger_context": "counter_milestone",
+                "user_engagement": tapCount > 50 ? "high" : "medium"
+            ]
+        )
+        
         PremiumManager.shared.showSubscriptionOptions(from: self)
     }
     
@@ -446,5 +492,88 @@ class MainViewController: UIViewController {
         guard let randomFeature = lockedFeatures.randomElement() else { return }
         
         PremiumManager.shared.showUpgradePrompt(for: randomFeature, from: self)
+    }
+    
+    // MARK: - Privacy Protection
+    
+    private func setupPrivacyProtection() {
+        // Home screen is mostly non-sensitive, but apply general protection
+        applyUXCamPrivacyProtection()
+        
+        // Note: Counter and challenge data are not considered sensitive
+        // as they don't contain personal information
+        
+        #if DEBUG
+        print("🔒 Home screen privacy protection configured")
+        #endif
+    }
+    
+    // MARK: - UXCam Event Tracking
+    
+    private func trackMilestoneReached(_ milestone: Int) {
+        let timeToMilestone = Date().timeIntervalSince(Date()) // Calculate actual time
+        
+        UXCamEventManager.shared.trackMilestoneReached(
+            milestoneValue: milestone,
+            milestoneType: "tap_counter",
+            celebrationShown: true,
+            timeToMilestone: timeToMilestone
+        )
+        
+        // Track feature discovery if this is a significant milestone
+        if milestone == 10 {
+            UXCamEventManager.shared.trackFeatureDiscovered(
+                featureName: "milestone_celebration",
+                discoveryMethod: "guided",
+                timeToDiscovery: timeToMilestone
+            )
+        }
+    }
+    
+    private func trackShareSuccess() {
+        UXCamEventManager.shared.trackContentShared(
+            contentType: "milestone_achievement",
+            shareChannel: "system_share",
+            contentValue: [
+                "milestone_value": tapCount,
+                "achievement_level": tapCount > 100 ? "high" : "medium",
+                "viral_potential": "high"
+            ]
+        )
+    }
+    
+    private func trackDeepEngagementSession() {
+        // Track when user shows deep engagement with the app
+        let sessionStart = Date() // Should be tracked from app launch
+        let featuresUsed = 3 // Counter + challenges + achievements
+        let engagementScore = calculateEngagementScore()
+        
+        if engagementScore > 0.6 {
+            UXCamEventManager.shared.trackDeepEngagement(
+                sessionDuration: Date().timeIntervalSince(sessionStart),
+                featuresUsed: featuresUsed,
+                engagementScore: engagementScore
+            )
+        }
+    }
+    
+    private func calculateEngagementScore() -> Double {
+        // Calculate engagement based on user actions
+        var score = 0.0
+        
+        // Base engagement from tap count
+        score += min(Double(tapCount) / 100.0, 0.4)
+        
+        // Achievements contribute to engagement
+        let achievements = AchievementManager.shared.getUnlockedAchievements()
+        score += min(Double(achievements.count) / 10.0, 0.3)
+        
+        // Daily challenges add engagement
+        if let challenge = DailyChallengeManager.shared.getCurrentChallenge(),
+           challenge.isCompleted {
+            score += 0.3
+        }
+        
+        return min(score, 1.0)
     }
 } 

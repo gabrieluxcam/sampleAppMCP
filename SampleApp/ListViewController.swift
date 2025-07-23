@@ -46,6 +46,23 @@ class ListViewController: UIViewController {
         ])
     }
     
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        
+        // Tag screen for UXCam when user actually sees it
+        UXCamScreenNames.tagScreen(UXCamScreenNames.topicsList)
+        
+        // Apply privacy protection for user-generated content
+        setupPrivacyProtection()
+    }
+    
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        
+        // Remove screen-level privacy protection when leaving
+        removeUXCamPrivacyProtection()
+    }
+    
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         loadTopics() // Refresh data
@@ -210,6 +227,9 @@ class ListViewController: UIViewController {
                 "results_count": filteredTopics.count,
                 "filter": currentFilter.title
             ])
+            
+            // Track UXCam search performed
+            trackSearchPerformed(query: searchText, resultsCount: filteredTopics.count)
         }
     }
     
@@ -490,6 +510,16 @@ class ListViewController: UIViewController {
             "topic_category": topic.category.rawValue
         ])
         
+        // Track UXCam topic completion
+        if topic.isCompleted {
+            UXCamEventManager.shared.trackTopicCompleted(
+                topicId: topic.id,
+                category: topic.category.rawValue,
+                completionTime: 0, // Calculate actual time
+                userRating: topic.rating
+            )
+        }
+        
         // Update daily challenge progress
         DailyChallengeManager.shared.updateProgress(for: "knowledge", increment: 1)
         AchievementManager.shared.updateProgress(for: "first_topic", progress: 1)
@@ -517,6 +547,83 @@ class ListViewController: UIViewController {
         }
         
         present(activityVC, animated: true)
+    }
+    
+    // MARK: - Privacy Protection
+    
+    private func setupPrivacyProtection() {
+        // Configure list-specific privacy protection for user-generated content
+        UXCamPrivacyManager.shared.configureListScreenPrivacy(
+            searchBar: searchController.searchBar,
+            customTopicCells: getCustomTopicCells()
+        )
+        
+        // Apply general screen-level protection if needed
+        applyUXCamPrivacyProtection()
+        
+        #if DEBUG
+        print("🔒 Topics list privacy protection configured")
+        #endif
+    }
+    
+    private func getCustomTopicCells() -> [UITableViewCell] {
+        // Return cells for custom (user-generated) topics that need privacy protection
+        var customCells: [UITableViewCell] = []
+        
+        for indexPath in tableView.indexPathsForVisibleRows ?? [] {
+            let topic = filteredTopics[indexPath.row]
+            if topic.id.hasPrefix("custom_") {
+                if let cell = tableView.cellForRow(at: indexPath) {
+                    customCells.append(cell)
+                }
+            }
+        }
+        
+        return customCells
+    }
+    
+    // MARK: - UXCam Event Tracking
+    
+    private func trackSearchPerformed(query: String, resultsCount: Int) {
+        // Track search with privacy-conscious approach
+        let sanitizedQuery = query.count > 50 ? String(query.prefix(50)) : query
+        
+        UXCamEventManager.shared.trackFeatureUsage(
+            feature: "topic_search",
+            success: resultsCount > 0,
+            context: [
+                "search_query_length": query.count,
+                "results_found": resultsCount,
+                "filter_applied": currentFilter.title,
+                "search_success": resultsCount > 0 ? "true" : "false"
+            ]
+        )
+        
+        // Track feature discovery if this is first search
+        let searchCount = UserDefaults.standard.integer(forKey: "search_count")
+        if searchCount == 0 {
+            UXCamEventManager.shared.trackFeatureDiscovered(
+                featureName: "topic_search",
+                discoveryMethod: "exploration",
+                timeToDiscovery: 0 // Calculate actual time from first app launch
+            )
+        }
+        
+        UserDefaults.standard.set(searchCount + 1, forKey: "search_count")
+    }
+    
+    private func trackTopicInteraction(topic: Topic, interactionType: String) {
+        UXCamEventManager.shared.trackFeatureUsage(
+            feature: "topic_interaction",
+            success: true,
+            context: [
+                "topic_id": topic.id,
+                "topic_category": topic.category.rawValue,
+                "interaction_type": interactionType,
+                "topic_difficulty": topic.difficulty.rawValue,
+                "topic_completed": topic.isCompleted ? "true" : "false"
+            ]
+        )
     }
 }
 

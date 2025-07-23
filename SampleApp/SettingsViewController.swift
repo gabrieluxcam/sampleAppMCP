@@ -1,4 +1,5 @@
 import UIKit
+import UXCam
 
 class SettingsViewController: UIViewController {
     
@@ -30,6 +31,23 @@ class SettingsViewController: UIViewController {
         // Update daily challenge
         DailyChallengeManager.shared.updateProgress(for: "settings", increment: 1)
         AchievementManager.shared.updateProgress(for: "settings_explorer", progress: 1)
+    }
+    
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        
+        // Tag screen for UXCam when user actually sees it
+        UXCamScreenNames.tagScreen(UXCamScreenNames.settings)
+        
+        // Apply privacy protection for settings
+        setupPrivacyProtection()
+    }
+    
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        
+        // Remove screen-level privacy protection when leaving
+        removeUXCamPrivacyProtection()
     }
     
     override func viewWillAppear(_ animated: Bool) {
@@ -96,6 +114,9 @@ extension SettingsViewController: UITableViewDataSource, UITableViewDelegate {
         
         // Configure cell based on setting type
         configureCellAppearance(cell: cell, settingName: settingName)
+        
+        // Apply privacy protection to sensitive cells
+        applyCellPrivacyProtection(cell, settingName: settingName)
         
         return cell
     }
@@ -496,6 +517,13 @@ extension SettingsViewController: UITableViewDataSource, UITableViewDelegate {
     
     private func exportUserData() {
         if !PremiumManager.shared.isFeatureUnlocked("export_data") {
+            // Track premium feature gate hit
+            UXCamEventManager.shared.trackPremiumFeatureGated(
+                featureId: "export_data",
+                userIntent: "high", // User actively tried to access
+                gateResponse: "upgrade_prompt_shown"
+            )
+            
             let feature = PremiumManager.shared.getPremiumFeatures().first { $0.id == "export_data" }!
             PremiumManager.shared.showUpgradePrompt(for: feature, from: self)
             return
@@ -639,6 +667,13 @@ extension SettingsViewController: UITableViewDataSource, UITableViewDelegate {
     
     private func showDebugInfo() {
         if !PremiumManager.shared.isFeatureUnlocked("advanced_analytics") {
+            // Track premium feature gate hit
+            UXCamEventManager.shared.trackPremiumFeatureGated(
+                featureId: "advanced_analytics",
+                userIntent: "medium", // Technical feature, less critical
+                gateResponse: "upgrade_prompt_shown"
+            )
+            
             let feature = PremiumManager.shared.getPremiumFeatures().first { $0.id == "advanced_analytics" }!
             PremiumManager.shared.showUpgradePrompt(for: feature, from: self)
             return
@@ -811,5 +846,38 @@ extension SettingsViewController: UITableViewDataSource, UITableViewDelegate {
         })
         
         present(alert, animated: true)
+    }
+    
+    // MARK: - Privacy Protection
+    
+    private func setupPrivacyProtection() {
+        // Configure settings-specific privacy protection
+        UXCamPrivacyManager.shared.configureSettingsScreenPrivacy(for: tableView)
+        
+        // Apply general screen-level protection if needed
+        applyUXCamPrivacyProtection()
+        
+        #if DEBUG
+        print("🔒 Settings privacy protection configured")
+        #endif
+    }
+    
+    private func applyCellPrivacyProtection(_ cell: UITableViewCell, settingName: String) {
+        // Apply privacy protection to specific settings cells
+        if UXCamPrivacyManager.shared.shouldOccludeSettingsCell(withTitle: settingName) {
+            // For sensitive settings, occlude the detail text which may contain personal info
+            if let detailLabel = cell.detailTextLabel {
+                UXCam.occludeSensitiveView(detailLabel)
+            }
+            
+            // For account-related settings, occlude the entire cell content area
+            if settingName == "Account" {
+                UXCam.occludeSensitiveView(cell.contentView)
+            }
+            
+            #if DEBUG
+            print("🔒 Settings cell privacy applied: \(settingName)")
+            #endif
+        }
     }
 } 

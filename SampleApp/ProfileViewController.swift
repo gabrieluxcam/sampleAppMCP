@@ -57,6 +57,23 @@ class ProfileViewController: UIViewController {
         ])
     }
     
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        
+        // Tag screen for UXCam when user actually sees it
+        UXCamScreenNames.tagScreen(UXCamScreenNames.userProfile)
+        
+        // Apply privacy protection for sensitive profile data
+        setupPrivacyProtection()
+    }
+    
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        
+        // Remove screen-level privacy protection when leaving
+        removeUXCamPrivacyProtection()
+    }
+    
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         loadProfileData()
@@ -541,6 +558,9 @@ class ProfileViewController: UIViewController {
                     "fields_changed": Array(changes.keys).joined(separator: ",")
                 ])
                 
+                // Track UXCam profile customization
+                self.trackProfileCustomization(changes: changes)
+                
                 // Update daily challenge
                 DailyChallengeManager.shared.updateProgress(for: "customization", increment: 1)
                 AchievementManager.shared.updateProgress(for: "profile_master", progress: 1)
@@ -551,6 +571,11 @@ class ProfileViewController: UIViewController {
         alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
         
         present(alert, animated: true)
+        
+        // Protect the editing fields after a brief delay to ensure they're rendered
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            self.protectEditingFields()
+        }
     }
     
     @objc private func shareProfileTapped() {
@@ -585,6 +610,17 @@ class ProfileViewController: UIViewController {
             ])
             
             if completed {
+                // Track UXCam profile sharing
+                UXCamEventManager.shared.trackContentShared(
+                    contentType: "user_profile",
+                    shareChannel: activityType?.rawValue ?? "unknown",
+                    contentValue: [
+                        "achievements_count": unlockedAchievements,
+                        "current_streak": streak,
+                        "profile_completeness": self.calculateProfileCompleteness()
+                    ]
+                )
+                
                 // Update daily challenge and achievements
                 DailyChallengeManager.shared.updateProgress(for: "social", increment: 1)
                 AchievementManager.shared.updateProgress(for: "social_butterfly", progress: 1)
@@ -656,6 +692,9 @@ extension ProfileViewController: UICollectionViewDataSource, UICollectionViewDel
             "is_unlocked": achievement.isUnlocked
         ])
         
+        // Track UXCam achievement interaction
+        trackAchievementInteraction(achievementId: achievement.id, isUnlocked: achievement.isUnlocked)
+        
         let statusText = achievement.isUnlocked ? "🎉 Unlocked!" : "🔒 Locked"
         let progressText = achievement.isUnlocked ? "Complete!" : "\(achievement.progress)/\(achievement.requirement)"
         
@@ -676,6 +715,123 @@ extension ProfileViewController: UICollectionViewDataSource, UICollectionViewDel
         }
         
         present(alert, animated: true)
+    }
+    
+    // MARK: - Privacy Protection
+    
+    private func setupPrivacyProtection() {
+        // Configure profile-specific privacy protection
+        UXCamPrivacyManager.shared.configureProfileScreenPrivacy(
+            profileImage: profileImageView,
+            nameLabel: nameLabel,
+            emailLabel: emailLabel,
+            personalInfoViews: [] // Add any additional personal info views here
+        )
+        
+        // Apply general screen-level protection if needed
+        applyUXCamPrivacyProtection()
+        
+        #if DEBUG
+        print("🔒 Profile privacy protection configured")
+        #endif
+    }
+    
+    private func protectEditingFields() {
+        // When editing profile, protect the text input fields
+        guard let alertController = presentedViewController as? UIAlertController,
+              let textFields = alertController.textFields else { return }
+        
+        for textField in textFields {
+            textField.applySmartOcclusion()
+        }
+    }
+    
+    // MARK: - UXCam Event Tracking
+    
+    private func trackProfileCustomization(changes: [String: String]) {
+        let completeness = calculateProfileCompleteness()
+        
+        UXCamEventManager.shared.trackFeatureUsage(
+            feature: "profile_customization",
+            success: true,
+            context: [
+                "fields_updated": changes.keys.joined(separator: ","),
+                "profile_completeness": completeness,
+                "personalization_level": completeness > 0.7 ? "high" : "medium"
+            ]
+        )
+        
+        // Track profile completion milestone
+        if completeness >= 1.0 {
+            UXCamEventManager.shared.trackOnboardingCompleted(
+                completionTime: 0, // Calculate actual time
+                stepsCompleted: changes.count,
+                dropOffPoints: []
+            )
+        }
+    }
+    
+    private func trackAchievementInteraction(achievementId: String, isUnlocked: Bool) {
+        if isUnlocked {
+            let achievements = AchievementManager.shared.getAchievements()
+            let achievement = achievements.first { $0.id == achievementId }
+            
+            if let achievement = achievement {
+                UXCamEventManager.shared.trackAchievementUnlocked(
+                    achievementId: achievement.id,
+                    category: achievement.category.rawValue,
+                    totalUnlocked: achievements.filter { $0.isUnlocked }.count,
+                    rarityLevel: calculateAchievementRarity(achievement)
+                )
+            }
+        }
+    }
+    
+    private func trackProfilePhotoUpdate(source: String) {
+        UXCamEventManager.shared.trackFeatureUsage(
+            feature: "profile_photo_update",
+            success: true,
+            context: [
+                "upload_source": source,
+                "personalization_action": "photo_change",
+                "engagement_level": "high"
+            ]
+        )
+    }
+    
+    private func calculateProfileCompleteness() -> Double {
+        var completeness = 0.0
+        
+        // Check if profile photo exists
+        if profileImageView.image != UIImage(systemName: "person.circle.fill") {
+            completeness += 0.4
+        }
+        
+        // Check if name is set
+        if let name = nameLabel.text, !name.isEmpty && name != "John Doe" {
+            completeness += 0.3
+        }
+        
+        // Check if email is set
+        if let email = emailLabel.text, !email.isEmpty && email != "john.doe@example.com" {
+            completeness += 0.3
+        }
+        
+        return completeness
+    }
+    
+    private func calculateAchievementRarity(_ achievement: Achievement) -> String {
+        // Calculate rarity based on achievement type and progress
+        switch achievement.category {
+        case .social:
+            return "uncommon"
+        case .learning:
+            return "common"
+        case .tapping:
+            return achievement.requirement > 100 ? "rare" : "common"
+        default:
+            return "common"
+        }
     }
 }
 
@@ -706,6 +862,9 @@ extension ProfileViewController: UIImagePickerControllerDelegate, UINavigationCo
             "changes_count": 1,
             "fields_changed": "profile_photo"
         ])
+        
+        // Track UXCam profile photo update
+        trackProfilePhotoUpdate(source: "image_picker")
         
         // Update daily challenge and achievements
         DailyChallengeManager.shared.updateProgress(for: "customization", increment: 1)
